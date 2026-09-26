@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 
 from app.db.enums import DiscrepancyField, DiscrepancyType, SourceSystem
@@ -25,6 +26,7 @@ class EventView:
     amount: Decimal | None
     status: str | None
     base_value: Decimal | None = None
+    notes: tuple[str, ...] = ()  # informational note codes from loading, e.g. REF_NORMALIZED
 
 
 @dataclass(frozen=True)
@@ -38,10 +40,34 @@ class DiscrepancyDraft:
     details: dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
+class RecordStatus(str, Enum):
+    RECONCILED = "RECONCILED"  # both systems agree (possibly after normalizing refs / summing a split)
+    EXCEPTION = "EXCEPTION"  # at least one discrepancy; both systems' values are kept, neither wins
+    HIDDEN = "HIDDEN"  # tenant conflict: not shown to any org
+
+
+@dataclass(frozen=True)
+class ReconciledRecord:
+    """The canonical record: one per match_key, whatever the outcome."""
+
+    match_key: str
+    tenant_id: uuid.UUID | None
+    status: RecordStatus
+    a_record_ids: list[str]
+    b_entry_ids: list[str]
+    amount_a: Decimal | None
+    amount_b: Decimal | None  # summed over distinct B entries
+    event_date: date | None
+    location_code: str | None
+    exception_codes: list[str]
+    notes: list[str]
+
+
 @dataclass
 class ReconciliationResult:
     tenant_by_event: dict[uuid.UUID, uuid.UUID | None] = dataclasses.field(default_factory=dict)
     discrepancies: list[DiscrepancyDraft] = dataclasses.field(default_factory=list)
+    records: list[ReconciledRecord] = dataclasses.field(default_factory=list)
 
 
 def group_key(event: EventView) -> str:
@@ -64,8 +90,48 @@ def reconcile(events: list[EventView]) -> ReconciliationResult:
 
     result = ReconciliationResult()
     for key in sorted(groups):
+        before = len(result.discrepancies)
         _reconcile_group(key, groups[key], result)
+        result.records.append(_record(key, groups[key], result, result.discrepancies[before:]))
     return result
+
+
+def _distinct_b(b_events: list[EventView]) -> list[EventView]:
+    seen: dict[tuple, EventView] = {}
+    for b in b_events:
+        seen.setdefault((b.amount, b.event_date, b.location_id), b)
+    return list(seen.values())
+
+
+def _record(
+    key: str, group: list[EventView], result: ReconciliationResult, found: list[DiscrepancyDraft]
+) -> ReconciledRecord:
+    a_events = sorted((e for e in group if e.source_system == SourceSystem.SYSTEM_A), key=lambda e: e.external_event_id)
+    b_events = sorted((e for e in group if e.source_system == SourceSystem.SYSTEM_B), key=lambda e: e.external_event_id)
+    entries = _distinct_b(b_events)
+    amounts_b = [e.amount for e in entries]
+    tenant_id = result.tenant_by_event[group[0].id]
+    anchor = a_events[0] if a_events else b_events[0]
+
+    notes = sorted({note for e in group for note in e.notes})
+    if len(entries) > 1 and len(entries) == len(b_events):
+        notes.append("SPLIT_ENTRIES_SUMMED")
+
+    codes = [d.type.value for d in found]
+    status = RecordStatus.HIDDEN if tenant_id is None else RecordStatus.EXCEPTION if codes else RecordStatus.RECONCILED
+    return ReconciledRecord(
+        match_key=key,
+        tenant_id=tenant_id,
+        status=status,
+        a_record_ids=[e.external_event_id for e in a_events],
+        b_entry_ids=[e.external_event_id for e in b_events],
+        amount_a=a_events[0].amount if len(a_events) == 1 else None,
+        amount_b=None if not entries or any(v is None for v in amounts_b) else sum(amounts_b, Decimal(0)),  # type: ignore[arg-type]
+        event_date=anchor.event_date,
+        location_code=anchor.location_code,
+        exception_codes=codes,
+        notes=notes,
+    )
 
 
 def _reconcile_group(key: str, group: list[EventView], result: ReconciliationResult) -> None:

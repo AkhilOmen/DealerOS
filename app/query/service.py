@@ -2,12 +2,13 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
 
 from app.db.base import utcnow
-from app.db.enums import QueryStatus, Status
+from app.db.enums import QueryStatus, SourceSystem, Status
 from app.db.models import QueryLog, Tenant
 from app.db.repositories.query_log import query_log_repository
 from app.db.session import AsyncDataStore, tenant_data_store
@@ -30,6 +31,7 @@ class OrgResult:
     org: str
     rows: list[dict[str, Any]]
     truncated: bool
+    summary: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -111,7 +113,7 @@ async def answer_question(
         results = []
         for org, tenant_id in orgs.items():
             rows, truncated = await _fetch_for_org(tenant_id, plan)
-            results.append(OrgResult(org=org, rows=rows, truncated=truncated))
+            results.append(OrgResult(org=org, rows=rows, truncated=truncated, summary=summarize(plan, rows, truncated)))
 
         log.status, log.row_count = QueryStatus.ANSWERED, sum(len(r.rows) for r in results)
         return QueryAnswer(
@@ -136,9 +138,30 @@ async def answer_question(
             logger.exception("could not write query_log")
 
 
+def summarize(plan: PlannerOutput, rows: list[dict[str, Any]], truncated: bool) -> dict[str, Any]:
+    if plan.dataset == Dataset.DISCREPANCIES:
+        by_type: dict[str, int] = {}
+        for row in rows:
+            by_type[row["discrepancy_type"]] = by_type.get(row["discrepancy_type"], 0) + 1
+        return {"discrepancies": len(rows), "by_type": by_type, "complete": not truncated}
+
+    for row in rows:
+        row["open_discrepancies"] = row.get("open_discrepancies") or []
+    a_rows = [r for r in rows if r["source_system"] == SourceSystem.SYSTEM_A.value]
+    disputed = sorted({r["match_key"] for r in rows if r["open_discrepancies"] and r["match_key"]})
+    agreed = [r for r in a_rows if not r["open_discrepancies"]]
+    return {
+        "system_a_records": len(a_rows),
+        "system_b_entries": len(rows) - len(a_rows),
+        "disputed_records": disputed,
+        "agreed_records": len(agreed),
+        "agreed_amount_total": None if truncated else f"{sum(Decimal(r['amount']) for r in agreed if r['amount']):.2f}",
+        "complete": not truncated,
+    }
+
+
 def _describe(plan: PlannerOutput, results: list[OrgResult]) -> str:
     f = plan.filters
-    what = f"{f.discrepancy_type.value} discrepancies" if f.discrepancy_type else plan.dataset.value
     scope = []
     if f.date_from or f.date_to:
         scope.append(f"between {f.date_from or '…'} and {f.date_to or '…'}")
@@ -150,13 +173,24 @@ def _describe(plan: PlannerOutput, results: list[OrgResult]) -> str:
         scope.append(f"for {f.match_key}")
     suffix = (" " + " ".join(scope)) if scope else ""
 
-    def count(r: OrgResult) -> str:
-        return f"{len(r.rows)}{'+' if r.truncated else ''}"
+    parts = []
+    for r in results:
+        s = r.summary
+        if plan.dataset == Dataset.DISCREPANCIES:
+            noun = "discrepancy" if s["discrepancies"] == 1 else "discrepancies"
+            what = f"{f.discrepancy_type.value} {noun}" if f.discrepancy_type else noun
+            parts.append(f"{r.org}: {s['discrepancies']} {what}")
+            continue
+        text = f"{r.org}: {s['system_a_records']} System A records and {s['system_b_entries']} System B entries"
+        if s["disputed_records"]:
+            text += f"; {len(s['disputed_records'])} records disputed ({', '.join(s['disputed_records'])})"
+        if s["complete"]:
+            text += f"; agreed total {s['agreed_amount_total']} over {s['agreed_records']} undisputed records"
+        else:
+            text += f"; more than {MAX_ROWS} rows, so no totals are stated"
+        parts.append(text)
 
-    if len(results) == 1:
-        text = f"{count(results[0])} {what} for {results[0].org}{suffix}."
-    else:
-        text = f"{what[:1].upper() + what[1:]}{suffix}: " + ", ".join(f"{r.org} {count(r)}" for r in results) + "."
+    answer = f"{'Discrepancies' if plan.dataset == Dataset.DISCREPANCIES else 'Events'}{suffix}. " + ". ".join(parts) + "."
     if plan.dataset == Dataset.DISCREPANCIES:
-        text += " Discrepancies are between System A and System B within each org."
-    return text
+        answer += " Discrepancies are between System A and System B within each org."
+    return answer

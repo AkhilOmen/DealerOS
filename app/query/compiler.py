@@ -2,12 +2,14 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app.core.config import settings
+from app.db.enums import DiscrepancyStatus
 from app.db.models import Discrepancy, Event, Location
 from app.db.session import AsyncDataStore
 from app.query.plan import Filters
+from app.reconciliation.taxonomy import reason
 
 MAX_ROWS = 500
 
@@ -22,6 +24,7 @@ async def fetch_events(ads: AsyncDataStore, tenant_id: uuid.UUID, f: Filters) ->
             Event.event_date,
             Event.amount,
             Event.status,
+            _open_discrepancies(tenant_id).label("open_discrepancies"),
         )
         .join(Location, Location.id == Event.location_id)
         .where(Event.tenant_id == tenant_id)
@@ -43,6 +46,19 @@ async def fetch_events(ads: AsyncDataStore, tenant_id: uuid.UUID, f: Filters) ->
     return await _run(ads, query)
 
 
+def _open_discrepancies(tenant_id: uuid.UUID):
+    # Evidence for the grounding contract: which of the record's facts are disputed right now.
+    return (
+        select(func.array_agg(Discrepancy.type))
+        .where(
+            Discrepancy.tenant_id == tenant_id,
+            Discrepancy.match_key == Event.match_key,
+            Discrepancy.status == DiscrepancyStatus.OPEN,
+        )
+        .scalar_subquery()
+    )
+
+
 async def fetch_discrepancies(ads: AsyncDataStore, tenant_id: uuid.UUID, f: Filters) -> list[dict[str, Any]]:
     query = (
         select(
@@ -62,7 +78,11 @@ async def fetch_discrepancies(ads: AsyncDataStore, tenant_id: uuid.UUID, f: Filt
     if f.discrepancy_type:
         query = query.where(Discrepancy.type == f.discrepancy_type)
 
-    return await _run(ads, query)
+    rows = await _run(ads, query)
+    for row in rows:  # say what each code means and what to do, not just the code
+        r = reason(row["discrepancy_type"])
+        row.update(severity=r.severity.value, meaning=r.meaning, action=r.action)
+    return rows
 
 
 async def _run(ads: AsyncDataStore, query) -> list[dict[str, Any]]:
@@ -85,6 +105,8 @@ def _json_safe(value: Any) -> Any:
         return f"{value:.2f}"
     if hasattr(value, "isoformat"):
         return value.isoformat()
+    if isinstance(value, list):
+        return sorted({_json_safe(v) for v in value})
     if hasattr(value, "value"):  # enums
         return value.value
     return value

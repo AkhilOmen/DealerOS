@@ -72,7 +72,7 @@ async def _answer(
         answer=answer.answer,
         plan=answer.plan,
         results=[
-            OrgQueryResult(org=r.org, row_count=len(r.rows), truncated=r.truncated, rows=r.rows)
+            OrgQueryResult(org=r.org, row_count=len(r.rows), truncated=r.truncated, summary=r.summary, rows=r.rows)
             for r in answer.results
         ],
     )

@@ -50,6 +50,12 @@ class BaseIngestor[RowT: CsvRow](ABC):
         return set(self.row_model.model_fields)
 
     async def ingest(self, ads: AsyncDataStore, job: IngestionJob, fh: TextIO) -> IngestResult:
+        rows, result = self.parse(fh)
+        await self.load(ads, job, rows, result)
+        return result
+
+    def parse(self, fh: TextIO) -> tuple[list[ParsedRow[RowT]], IngestResult]:
+        """Pure: headers, per-row validation and in-file duplicates. No database."""
         reader = csv.DictReader(fh, restkey=EXTRA_COLUMNS_KEY)
         headers = [h.strip() for h in (reader.fieldnames or [])]
         missing = self.expected_headers - set(headers)
@@ -73,8 +79,7 @@ class BaseIngestor[RowT: CsvRow](ABC):
             parsed.append(ParsedRow(row_number=row_number, raw=raw, row=row))  # type: ignore[arg-type]
 
         unique_rows = self._drop_in_file_duplicates(parsed, result)
-        await self.load(ads, job, unique_rows, result)
-        return result
+        return unique_rows, result
 
     def _drop_in_file_duplicates(self, parsed: list[ParsedRow[RowT]], result: IngestResult) -> list[ParsedRow[RowT]]:
         by_key: dict[str, list[ParsedRow[RowT]]] = defaultdict(list)

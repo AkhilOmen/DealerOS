@@ -77,7 +77,12 @@ async def test_events_for_an_org_in_a_date_range(ads, dataset):
     assert result.org == "ORG-A" and len(result.rows) == expected > 0
     assert {r["location"] for r in result.rows} <= org_a_locations
     assert all("2026-03-01" <= r["event_date"] <= "2026-03-15" for r in result.rows)
-    assert answer.answer == f"{expected} events for ORG-A between 2026-03-01 and 2026-03-15."
+    s = result.summary
+    assert s["system_a_records"] + s["system_b_entries"] == expected  # counted per system, never blended
+    assert answer.answer.startswith(
+        f"Events between 2026-03-01 and 2026-03-15. ORG-A: {s['system_a_records']} System A records and "
+        f"{s['system_b_entries']} System B entries"
+    )
 
 
 async def test_org_spelling_is_normalized(ads, dataset):
@@ -126,9 +131,10 @@ async def test_no_org_or_several_orgs_are_answered_per_org(ads, dataset, orgs):
     # One result per org, each fetched separately; rows are never mixed.
     assert {r.org: [row["match_key"] for row in r.rows] for r in answer.results} == VALUE_MISMATCHES
     assert answer.answer == (
-        "VALUE_MISMATCH discrepancies: ORG-A 3, ORG-B 1. "
+        "Discrepancies. ORG-A: 3 VALUE_MISMATCH discrepancies. ORG-B: 1 VALUE_MISMATCH discrepancy. "
         "Discrepancies are between System A and System B within each org."
     )
+    assert answer.results[0].rows[0]["meaning"] and answer.results[0].rows[0]["action"]
     log = await last_log(ads)
     assert (log.external_org_id, log.tenant_id, log.row_count) == ("ORG-A,ORG-B", None, 4)
 

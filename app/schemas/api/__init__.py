@@ -40,6 +40,7 @@ class OrgQueryResult(BaseModel):
     org: str
     row_count: int
     truncated: bool
+    summary: dict[str, Any]  # every number the answer states, derived from `rows`
     rows: list[dict[str, Any]]
 
 

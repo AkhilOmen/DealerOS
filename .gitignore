@@ -8,3 +8,4 @@ __pycache__/
 data/incoming/*
 !data/incoming/.gitkeep
 evals/results/
+out/

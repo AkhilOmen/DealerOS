@@ -22,6 +22,94 @@ CSV upload ─► API ─► file saved + ingestion_job (QUEUED) ─► ingestio
 - **Matching** is by `match_key` (A's `record_id`, B's normalized `record_ref`), comparing
   amount (`total_value` vs summed `value`), date, location and status.
 
+## The brief, and where each part is
+
+| Part | Where |
+|---|---|
+| 1. Architecture note | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): components, the reconciled data model and exception taxonomy, tenant isolation, what I'm not building in year one |
+| 2. Grounding contract | [`docs/GROUNDING.md`](docs/GROUNDING.md): the contract, the enforcing mechanism, and the naive-vs-grounded example ("What was ORG-A's total amount in March?"), pinned by `tests/test_grounding.py` |
+| 3. ADR | [`docs/adr/0001-tenant-is-assigned-by-reconciliation.md`](docs/adr/0001-tenant-is-assigned-by-reconciliation.md) |
+| 4. Code slice: the reconciliation core | `app/reconciliation/` (the engine is pure; `cli.py` runs it over the CSVs) + `tests/test_reconciliation*.py` |
+| Decisions | [`DECISIONS.md`](DECISIONS.md) |
+
+## Run the reconciliation core (no Docker, no database)
+
+```bash
+uv sync
+uv run python -m app.reconciliation.cli \
+    --locations tests/fixtures/dataset/locations.csv \
+    --system-a  tests/fixtures/dataset/system_a.csv \
+    --system-b  tests/fixtures/dataset/system_b.csv \
+    --out out/
+```
+
+```
+records: 121  EXCEPTION=11  HIDDEN=1  RECONCILED=109
+exceptions: 12
+  CRITICAL TENANT_CONFLICT            (no org)   1
+  HIGH     MISSING_IN_B               ORG-A      1
+  ...
+```
+
+- `out/reconciled.csv`: one **canonical record** per record id: org (blank = hidden), status
+  (`RECONCILED` / `EXCEPTION` / `HIDDEN`), A record ids, B entry ids, A amount, summed B amount,
+  date, location, exception codes, and notes (how messy input was interpreted, e.g.
+  `REF_NORMALIZED`, `SPLIT_ENTRIES_SUMMED`).
+- `out/exceptions.csv`: every exception, most serious first, with a machine-readable
+  `reason_code`, its kind (`DISAGREEMENT` / `INPUT`), severity, what it means, what to do, and
+  JSON evidence. Unusable rows (unknown location, unreadable date, conflicting duplicates) appear
+  here too, with file and line number.
+
+## What I built
+
+- **The reconciliation core**: pure matching rules (`engine.py`), the exception taxonomy
+  (`taxonomy.py`), a file-based runner (`files.py`, `cli.py`), and the same engine behind the
+  database service. The golden test pins the 12 disagreements in the attached data; separate tests
+  cover each trap (dirty references, split vs duplicate, `1,25,400.00`, the cross-tenant record).
+- **Tenant isolation**: tenant assigned only by reconciliation (hidden until then), Postgres
+  Row-Level Security under a SELECT-only role for every tenant read, tenant-scoped repositories,
+  and tests that try to read across the boundary with unfiltered SQL.
+- **The query layer**: plain-language questions → a structured plan from an LLM (Claude or any
+  OpenAI-compatible model) → per-org queries under RLS → an answer whose every number comes from
+  the returned rows. A public API scoped to the caller's credentials, and an internal one.
+- **Around it**: an upload API, a RabbitMQ consumer for ingestion and reconciliation with retries
+  and dead-lettering, Flyway migrations, Docker Compose.
+
+## What I deliberately did not build
+
+See [`docs/ARCHITECTURE.md` § 4](docs/ARCHITECTURE.md#4-deliberately-not-built-in-year-one) for
+the year-one list and what has to become true first (per-tenant database logins,
+fuzzy matching, picking a winner, general aggregates, tenant UI/SSO, automated S3 ingestion,
+incremental reconciliation, a warehouse).
+
+**A note on scope:** the brief asks for one narrow slice of running code. That slice is
+`app/reconciliation/` and runs on its own with the command above. The ingestion service, queue,
+and query API go beyond it: they grew out of the product this is meant to become (questions over
+tenant data), and they're where the isolation and grounding mechanisms actually run. None of it is
+needed to review the slice.
+
+## How I worked with the agent
+
+I used Claude Code (Claude Opus 5.5) as a pair: it read the three CSVs and listed every anomaly
+before any design, then we agreed the design one piece at a time (tenancy tables, ingestion
+tracking, the single event table, matching rules, discrepancies) before it wrote code. I pointed it
+at our existing internal libraries so the models, repositories, migrations and consumer followed
+our house patterns.
+
+What I kept control of: naming (`match_key`, `CommonBase`, `rejected_row_details`), and scope.
+I cut things it proposed as over-engineering: a rejected-rows table, a reconciliation-runs table,
+ORM relationships, an early version of tenant credentials, regex-based org detection, and
+aggregates in the query layer. I also chose raw SQL migrations over Alembic, and kept commits and
+database migrations in my own hands.
+
+Where it was wrong and how it was caught: the first design set the tenant at ingestion, and it
+switched to "hidden until reconciled" while implementing, once the REC-1077 leak window was spotted
+(ADR-0001); a "retry works" check that hadn't actually taken the database down was re-run
+properly; it had added `temperature=0`, which GPT-5 models reject (caught before the first real
+call); and its first query answers counted events across both systems, which is the kind of
+confident wrong number the grounding contract now prevents. Every claim about the data is backed
+by a test against the real files rather than by its say-so.
+
 ## Stack
 
 Python 3.12 · uv · FastAPI · SQLAlchemy 2 (async) · Pydantic v2 · PostgreSQL 16 · RabbitMQ 4
@@ -84,6 +172,11 @@ dealeros_tenant_reader` with `app.tenant_id` set, and **Postgres Row-Level Secur
 (migration `1.1.0`) only returns that org's rows (SELECT only, and nothing at all when no tenant
 is set). This is the safety net for the query layer: even a query without a tenant filter can't
 see another org's data.
+
+The API container logs in as **`dealeros_api`** (migration `1.3.0`), a non-owner with no access to
+`event`, `discrepancy` or `location`. A session that skips `tenant_data_store` gets `permission
+denied`. The consumer keeps the owner login (reconciliation must see every org). Password:
+`API_DB_PASSWORD` (default `dealeros_api`), passed to Flyway as a placeholder and to the API.
 
 ## Ask questions
 
@@ -178,20 +271,24 @@ app/db/migration/<version>/V<version>__<n>.postgresql-db-script.sql
 
 ```
 app/
-  api/            FastAPI app, routes, auth (internal client id + secret)
+  reconciliation/ engine.py (pure rules) · taxonomy.py (reason codes) · notes.py
+                  files.py + cli.py (CSV in → reconciled.csv + exceptions.csv) · service.py (DB runs)
+  ingestion/      parsing, normalizers, ingestors per dataset, file storage, job service
+  query/          plan (what the model returns) · planner(s) · compiler (SQL) · service (grounding)
+  tenancy/        tenant credentials: create + authenticate
+  api/            FastAPI app, routes, auth dependencies
   consumer/       queue consumer entrypoint + handlers (ingestion, reconciliation)
-  core/           settings, logging
-  db/             models, repositories, enums, session, migration/ (SQL)
-  ingestion/      storage, ingestors per dataset, normalizers, service
-  reconciliation/ engine (pure matching rules) + service
+  db/             models, repositories, enums, session (RLS-scoped tenant sessions), migration/ (SQL)
   messaging/      publisher, listener, base handler
-  schemas/        Pydantic: CSV rows, queue messages, API responses
+  schemas/        Pydantic: CSV rows, queue messages, API bodies
   utils/          custom exceptions
+docs/             ARCHITECTURE.md · GROUNDING.md · adr/
+evals/            golden questions for the query planner (real model calls)
 infra/rabbitmq/   queues, retry/dead-letter topology, dev user
-tests/            unit + integration tests (golden discrepancy set in test_reconciliation.py)
+tests/            unit + integration tests
 ```
 
-## Phase 2 (TODOs in code)
+## Phase 2 notes (TODOs in code)
 
 S3 uploads (+ Lambda bridge publishing the same message) · Databricks · categories / actors tables ·
 incremental reconciliation · `COPY`-based bulk load · internal clients stored in the DB.

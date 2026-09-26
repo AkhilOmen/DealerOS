@@ -9,6 +9,7 @@ from app.db.repositories.discrepancy import discrepancy_repository
 from app.db.repositories.event import event_repository
 from app.db.session import AsyncDataStore
 from app.reconciliation.engine import DiscrepancyDraft, EventView, reconcile
+from app.reconciliation.notes import notes_for
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def _to_view(event: Event, location_code: str, location_tenant_id) -> EventView:
         amount=event.amount,
         status=event.status,
         base_value=_decimal_or_none((event.attributes or {}).get("base_value")),
+        notes=notes_for(event.source_system, event.match_key_method, event.raw_row or {}),
     )
 
 
@@ -66,32 +68,18 @@ async def run_reconciliation(ads: AsyncDataStore) -> ReconciliationSummary:
         await discrepancy_repository.lock_for_reconciliation(ads)
         rows = await event_repository.list_with_location(ads)
         result = reconcile(
-            [
-                _to_view(
-                    event=event,
-                    location_code=code,
-                    location_tenant_id=tenant_id
-                ) for event, code, tenant_id in rows
-            ]
+            [_to_view(event=event, location_code=code, location_tenant_id=tenant_id) for event, code, tenant_id in rows]
         )
 
-        tenant_changes = await event_repository.assign_tenants(
-            ads=ads, tenant_by_event=result.tenant_by_event
-        )
+        tenant_changes = await event_repository.assign_tenants(ads=ads, tenant_by_event=result.tenant_by_event)
         resolved = await discrepancy_repository.sync(
-            ads=ads,
-            rows=[
-                _to_row(d) for d in result.discrepancies
-            ],
-            run_at=run_at
+            ads=ads, rows=[_to_row(d) for d in result.discrepancies], run_at=run_at
         )
     except BaseException:
         await ads.db.rollback()
         raise
 
-    hidden = sum(
-        1 for tenant_id in result.tenant_by_event.values() if tenant_id is None
-    )
+    hidden = sum(1 for tenant_id in result.tenant_by_event.values() if tenant_id is None)
     summary = ReconciliationSummary(
         events=len(rows),
         visible_events=len(rows) - hidden,

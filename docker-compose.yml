@@ -53,6 +53,7 @@ services:
       - -schemas=dealeros
       - -locations=filesystem:/flyway/sql
       - -connectRetries=10
+      - -placeholders.api_db_password=${API_DB_PASSWORD:-dealeros_api}
       - migrate
     volumes:
       - ./app/db/migration:/flyway/sql:ro
@@ -64,7 +65,11 @@ services:
     build: .
     image: dealeros-app          # built once here; the consumer reuses it
     command: ["python", "-m", "app.api.main"]
-    environment: *app-env
+    environment:
+      <<: *app-env
+      # Non-owner login (migration 1.3.0): no direct access to tenant data, so RLS can't be bypassed.
+      POSTGRES_USER: dealeros_api
+      POSTGRES_PASSWORD: ${API_DB_PASSWORD:-dealeros_api}
     ports:
       - "8000:8000"   # http://localhost:8000/docs
     volumes:

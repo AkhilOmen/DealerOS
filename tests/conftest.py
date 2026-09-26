@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATASET = Path(__file__).resolve().parent / "fixtures" / "dataset"
 TABLES = ("query_log", "discrepancy", "event", "ingestion_job", "tenant_credential", "location", "tenant")
 MIGRATIONS = ROOT / "app" / "db" / "migration"
+API_DB_PASSWORD = "dealeros_api"
 
 
 def _version(path: Path) -> tuple[int, ...]:
@@ -56,7 +57,8 @@ async def _create_test_database() -> None:
     try:
         await conn.execute(f'DROP SCHEMA IF EXISTS "{settings.DB_SCHEMA}" CASCADE')
         for path in migration_files():
-            await conn.execute(path.read_text())
+            # Flyway placeholders, as passed by docker-compose's migrate service.
+            await conn.execute(path.read_text().replace("${api_db_password}", API_DB_PASSWORD))
     finally:
         await conn.close()
 
