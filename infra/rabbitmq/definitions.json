@@ -1,0 +1,238 @@
+{
+  "users": [
+    {
+      "name": "dealeros",
+      "password_hash": "r6ktFNjYKUAqBdjilz4bQhuHdSrWtrKctWbCXKjcMg2A6SUL",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": [
+        "administrator"
+      ]
+    }
+  ],
+  "vhosts": [
+    {
+      "name": "dealeros"
+    }
+  ],
+  "permissions": [
+    {
+      "user": "dealeros",
+      "vhost": "dealeros",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "ingestion.exchange",
+      "vhost": "dealeros",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "reconciliation.exchange",
+      "vhost": "dealeros",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "ingestion-main-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic"
+      }
+    },
+    {
+      "name": "ingestion-retry-1-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic",
+        "x-message-ttl": 10000,
+        "x-dead-letter-exchange": "ingestion.exchange",
+        "x-dead-letter-routing-key": "ingestion-main-queue"
+      }
+    },
+    {
+      "name": "ingestion-retry-2-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic",
+        "x-message-ttl": 60000,
+        "x-dead-letter-exchange": "ingestion.exchange",
+        "x-dead-letter-routing-key": "ingestion-main-queue"
+      }
+    },
+    {
+      "name": "ingestion-retry-3-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic",
+        "x-message-ttl": 300000,
+        "x-dead-letter-exchange": "ingestion.exchange",
+        "x-dead-letter-routing-key": "ingestion-main-queue"
+      }
+    },
+    {
+      "name": "ingestion-dead-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic"
+      }
+    },
+    {
+      "name": "reconciliation-main-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic"
+      }
+    },
+    {
+      "name": "reconciliation-retry-1-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic",
+        "x-message-ttl": 10000,
+        "x-dead-letter-exchange": "reconciliation.exchange",
+        "x-dead-letter-routing-key": "reconciliation-main-queue"
+      }
+    },
+    {
+      "name": "reconciliation-retry-2-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic",
+        "x-message-ttl": 60000,
+        "x-dead-letter-exchange": "reconciliation.exchange",
+        "x-dead-letter-routing-key": "reconciliation-main-queue"
+      }
+    },
+    {
+      "name": "reconciliation-retry-3-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic",
+        "x-message-ttl": 300000,
+        "x-dead-letter-exchange": "reconciliation.exchange",
+        "x-dead-letter-routing-key": "reconciliation-main-queue"
+      }
+    },
+    {
+      "name": "reconciliation-dead-queue",
+      "vhost": "dealeros",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "classic"
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "source": "ingestion.exchange",
+      "vhost": "dealeros",
+      "destination": "ingestion-main-queue",
+      "destination_type": "queue",
+      "routing_key": "ingestion-main-queue",
+      "arguments": {}
+    },
+    {
+      "source": "ingestion.exchange",
+      "vhost": "dealeros",
+      "destination": "ingestion-retry-1-queue",
+      "destination_type": "queue",
+      "routing_key": "ingestion-retry-1-queue",
+      "arguments": {}
+    },
+    {
+      "source": "ingestion.exchange",
+      "vhost": "dealeros",
+      "destination": "ingestion-retry-2-queue",
+      "destination_type": "queue",
+      "routing_key": "ingestion-retry-2-queue",
+      "arguments": {}
+    },
+    {
+      "source": "ingestion.exchange",
+      "vhost": "dealeros",
+      "destination": "ingestion-retry-3-queue",
+      "destination_type": "queue",
+      "routing_key": "ingestion-retry-3-queue",
+      "arguments": {}
+    },
+    {
+      "source": "ingestion.exchange",
+      "vhost": "dealeros",
+      "destination": "ingestion-dead-queue",
+      "destination_type": "queue",
+      "routing_key": "ingestion-dead-queue",
+      "arguments": {}
+    },
+    {
+      "source": "reconciliation.exchange",
+      "vhost": "dealeros",
+      "destination": "reconciliation-main-queue",
+      "destination_type": "queue",
+      "routing_key": "reconciliation-main-queue",
+      "arguments": {}
+    },
+    {
+      "source": "reconciliation.exchange",
+      "vhost": "dealeros",
+      "destination": "reconciliation-retry-1-queue",
+      "destination_type": "queue",
+      "routing_key": "reconciliation-retry-1-queue",
+      "arguments": {}
+    },
+    {
+      "source": "reconciliation.exchange",
+      "vhost": "dealeros",
+      "destination": "reconciliation-retry-2-queue",
+      "destination_type": "queue",
+      "routing_key": "reconciliation-retry-2-queue",
+      "arguments": {}
+    },
+    {
+      "source": "reconciliation.exchange",
+      "vhost": "dealeros",
+      "destination": "reconciliation-retry-3-queue",
+      "destination_type": "queue",
+      "routing_key": "reconciliation-retry-3-queue",
+      "arguments": {}
+    },
+    {
+      "source": "reconciliation.exchange",
+      "vhost": "dealeros",
+      "destination": "reconciliation-dead-queue",
+      "destination_type": "queue",
+      "routing_key": "reconciliation-dead-queue",
+      "arguments": {}
+    }
+  ]
+}
