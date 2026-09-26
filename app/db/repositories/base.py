@@ -63,11 +63,17 @@ class AsyncBaseTenantRepository[ModelType: Base]:
         return result.scalars().first()
 
     async def list(
-        self, ads: AsyncDataStore, tenant_id: uuid.UUID, *where: ColumnElement[bool], limit: int = 100
+        self,
+        ads: AsyncDataStore,
+        tenant_id: uuid.UUID,
+        *where: ColumnElement[bool],
+        order_by: tuple[Any, ...] = (),
+        limit: int = 100,
     ) -> list[ModelType]:
         result = await ads.db.execute(
             select(self.model)
             .where(self._tenant_filter(tenant_id), *where)
+            .order_by(*order_by)
             .limit(limit)
         )
         return list(result.scalars())

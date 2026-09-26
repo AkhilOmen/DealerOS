@@ -41,10 +41,8 @@ class SystemARow(CsvRow):
 
 class SystemBRow(CsvRow):
     entry_id: RequiredStr
-    # Kept exactly as received; normalized into match_key by the ingestor.
     record_ref: str | None = None
     location_id: RequiredStr
     recorded_on: IsoDate = None
-    # Blank stays None (reported later as MISSING_VALUE), never 0.
     value: Amount = None
     label: OptionalStr = None

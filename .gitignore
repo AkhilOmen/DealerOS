@@ -7,3 +7,4 @@ __pycache__/
 .env
 data/incoming/*
 !data/incoming/.gitkeep
+evals/results/

@@ -1,4 +1,5 @@
 from functools import cached_property
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +53,15 @@ class Settings(BaseSettings):
     # TODO(phase-2): replace local folder with S3 (file_uri becomes s3://bucket/key instead of local://key).
     DATA_DIR: str = "data/incoming"
     MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024
+
+    # --- Query planner (LLM) ---
+    LLM_PROVIDER: str = "anthropic"
+    LLM_MODEL: str = "claude-opus-5.5"
+    LLM_API_KEY: SecretStr | None = None
+    LLM_BASE_URL: str | None = None
+    LLM_EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = "low"  # anthropic only; planning is a small, tightly constrained task
+    LLM_TIMEOUT_SECONDS: float = 30.0
+    QUERY_STATEMENT_TIMEOUT_MS: int = 5000
 
     # --- API ---
     API_HOST: str = "0.0.0.0"

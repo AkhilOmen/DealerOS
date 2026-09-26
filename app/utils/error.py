@@ -15,6 +15,10 @@ class FileTooLargeError(Exception):
     """The upload exceeds MAX_UPLOAD_BYTES."""
 
 
+class FileStorageError(Exception):
+    """The uploaded file could not be written to storage (disk full, permissions, ...)."""
+
+
 class FileFormatError(Exception):
     """The file as a whole is unusable (bad headers, not a CSV). Not retryable."""
 
@@ -30,3 +34,26 @@ class RowRejection(Exception):
 
 class EnqueueError(Exception):
     """The job row exists (marked FAILED) but its message could not be published."""
+
+
+# --- Queries ---
+class OrgNotFoundError(Exception):
+    """The question names an org that doesn't exist (or isn't active)."""
+
+
+class OrgAccessDeniedError(Exception):
+    """A tenant asked about an org other than its own."""
+
+
+class UnsupportedQuestionError(Exception):
+    """The planner says the question can't be answered from this data."""
+
+
+
+class PlannerError(Exception):
+    """The model call failed or returned something unusable."""
+
+
+class PlannerNotConfiguredError(Exception):
+    """No LLM provider / API key configured."""
+

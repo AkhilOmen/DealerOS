@@ -68,3 +68,11 @@ class DiscrepancyField(str, Enum):
 class DiscrepancyStatus(str, Enum):
     OPEN = "OPEN"
     RESOLVED = "RESOLVED"
+
+
+class QueryStatus(str, Enum):
+    ANSWERED = "ANSWERED"
+    REJECTED = "REJECTED"
+    UNSUPPORTED = "UNSUPPORTED"
+    FAILED = "FAILED"
+

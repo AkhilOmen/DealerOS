@@ -2,9 +2,10 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.db.enums import DatasetType, IngestionJobStatus, TriggerType
+from app.db.enums import DatasetType, Environment, IngestionJobStatus, TriggerType
+from app.query.plan import PlannerOutput
 
 
 class IngestionJobRead(BaseModel):
@@ -29,3 +30,35 @@ class IngestionJobRead(BaseModel):
     finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class QueryRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=2000)
+
+
+class OrgQueryResult(BaseModel):
+    org: str
+    row_count: int
+    truncated: bool
+    rows: list[dict[str, Any]]
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    plan: PlannerOutput
+    results: list[OrgQueryResult]  # one entry per org; rows are never mixed across orgs
+
+
+class CredentialCreate(BaseModel):
+    environment: Environment = Environment.SANDBOX
+    expires_at: datetime | None = None
+
+
+class CredentialCreated(BaseModel):
+    org: str
+    client_id: uuid.UUID
+    client_secret: str  # shown once; only its hash is stored
+    environment: Environment
+    expires_at: datetime | None
+    created_at: datetime
+

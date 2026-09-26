@@ -4,6 +4,11 @@ x-app-env: &app-env
   MQ_HOST: rabbitmq
   INTERNAL_CLIENT_ID: 46e3210d-94ec-465b-9566-c60c5779efdc
   INTERNAL_CLIENT_SECRET: jeJGK2e3Mb6Yc0IH2GXR_vylYTN4uLPC6LDL9rjAsEU
+  # Query planner: values come from .env (git-ignored) via compose variable substitution.
+  LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+  LLM_MODEL: ${LLM_MODEL:-claude-opus-5}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
 
 services:
   postgres:
@@ -57,6 +62,7 @@ services:
 
   api:
     build: .
+    image: dealeros-app          # built once here; the consumer reuses it
     command: ["python", "-m", "app.api.main"]
     environment: *app-env
     ports:
@@ -70,7 +76,8 @@ services:
         condition: service_healthy
 
   consumer:
-    build: .
+    image: dealeros-app
+    pull_policy: never           # local image, never on a registry
     command: ["python", "-m", "app.consumer.main"]
     environment: *app-env
     volumes:

@@ -11,7 +11,7 @@ from app.db.session import AsyncDataStore, get_async_data_store
 from app.ingestion import service
 from app.messaging.publisher import Publisher
 from app.schemas.api import IngestionJobRead
-from app.utils.error import EnqueueError, FileTooLargeError
+from app.utils.error import EnqueueError, FileStorageError, FileTooLargeError
 
 router = APIRouter(prefix="/v1/ingestion-jobs", tags=["ingestion"])
 
@@ -53,6 +53,8 @@ async def create_ingestion_job(
         )
     except FileTooLargeError as ex:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(ex)) from ex
+    except FileStorageError as ex:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "could not store the uploaded file") from ex
     except EnqueueError as ex:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "job recorded but could not be queued") from ex
 

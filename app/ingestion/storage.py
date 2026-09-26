@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlparse
 
 from app.core.config import settings
 from app.db.enums import DatasetType
-from app.utils.error import FileTooLargeError
+from app.utils.error import FileStorageError, FileTooLargeError
 
 
 @dataclass(frozen=True)
@@ -50,10 +50,10 @@ class LocalFileStore:
 
         key = f"{dataset_type.value.lower()}/{job_id}/{safe_file_name(file_name)}"
         path = self.root / key
-        path.parent.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256()
         size = 0
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("wb") as out:
                 async for chunk in chunks:
                     size += len(chunk)
@@ -61,6 +61,9 @@ class LocalFileStore:
                         raise FileTooLargeError(f"file exceeds {max_bytes} bytes")
                     digest.update(chunk)
                     out.write(chunk)
+        except OSError as ex:
+            path.unlink(missing_ok=True)
+            raise FileStorageError(f"could not store {key}: {ex}") from ex
         except BaseException:
             path.unlink(missing_ok=True)
             raise
